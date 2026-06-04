@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+alembic/
+
+# Node
+node_modules/
+dist/
+.vite/
+coverage/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Docker / local state
+*.log
+tmp/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+docs/
