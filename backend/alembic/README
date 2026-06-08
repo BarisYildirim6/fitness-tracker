@@ -1,0 +1,6 @@
+Alembic migration environment for the fitness tracker backend.
+
+Create new revisions with:
+
+    alembic revision --autogenerate -m "message"
+
