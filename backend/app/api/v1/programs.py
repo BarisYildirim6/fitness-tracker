@@ -10,8 +10,14 @@ from app.core.constants import SEED_USER_EMAIL
 from app.db.session import get_db
 from app.models.program import Program, WorkoutDay
 from app.models.user import User
-from app.models.workout import WorkoutExercise
-from app.schemas.program import ProgramDetailRead, WorkoutDayDetailRead
+from app.models.workout import WorkoutExercise, WorkoutExerciseOverride
+from app.schemas.program import (
+    ProgramDetailRead,
+    WorkoutDayDetailRead,
+    WorkoutDayProgressionRead,
+    WorkoutExerciseDetailRead,
+)
+from app.services.progression import get_progression_suggestion
 
 router = APIRouter(tags=["programs"])
 
@@ -80,3 +86,53 @@ def get_workout_day(
     if workout_day is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workout day not found")
     return workout_day
+
+
+@router.get("/workout-days/{workout_day_id}/progression", response_model=WorkoutDayProgressionRead)
+def get_workout_day_with_progression(
+    workout_day_id: UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> WorkoutDayProgressionRead:
+    workout_day = db.scalar(
+        select(WorkoutDay)
+        .join(Program)
+        .join(User)
+        .where(WorkoutDay.id == workout_day_id, visible_program_filter(current_user))
+        .options(workout_day_detail_options())
+    )
+    if workout_day is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workout day not found")
+
+    workout_exercise_ids = [item.id for item in workout_day.workout_exercises]
+    overrides_by_workout_exercise_id = {}
+    if workout_exercise_ids:
+        overrides_by_workout_exercise_id = {
+            override.workout_exercise_id: override
+            for override in db.scalars(
+                select(WorkoutExerciseOverride).where(
+                    WorkoutExerciseOverride.user_id == current_user.id,
+                    WorkoutExerciseOverride.workout_exercise_id.in_(workout_exercise_ids),
+                )
+            ).all()
+        }
+
+    return WorkoutDayProgressionRead.model_validate(
+        {
+            **WorkoutDayDetailRead.model_validate(workout_day).model_dump(),
+            "workout_exercises": [
+                {
+                    **WorkoutExerciseDetailRead.model_validate(item).model_dump(),
+                    "progression_suggestion": get_progression_suggestion(
+                        db=db,
+                        user_id=current_user.id,
+                        workout_exercise=item,
+                        exercise_id=overrides_by_workout_exercise_id[item.id].exercise_id
+                        if item.id in overrides_by_workout_exercise_id
+                        else item.exercise_id,
+                    ),
+                }
+                for item in workout_day.workout_exercises
+            ],
+        }
+    )

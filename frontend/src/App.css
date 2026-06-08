@@ -656,6 +656,27 @@ a:hover {
   color: #626d68;
 }
 
+.progression-panel {
+  display: grid;
+  gap: 5px;
+  margin-top: 10px;
+  border-left: 3px solid #185b50;
+  padding-left: 10px;
+  color: #39413f;
+  font-size: 0.9rem;
+}
+
+.progression-panel span {
+  color: #17201d;
+  font-weight: 700;
+}
+
+.progression-panel p {
+  margin: 0;
+  color: #626d68;
+  line-height: 1.45;
+}
+
 .set-log-grid {
   display: grid;
   grid-template-columns: 90px minmax(130px, 1fr) minmax(100px, 0.8fr) minmax(100px, 0.8fr) 96px;

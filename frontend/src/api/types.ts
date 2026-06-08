@@ -71,6 +71,22 @@ export type WorkoutExercise = {
   updated_at: string;
 };
 
+export type ProgressionSuggestion = {
+  exercise_id: string;
+  last_performed_at: string | null;
+  last_weight_kg: string | null;
+  last_reps: number[];
+  last_average_rpe: string | null;
+  suggested_weight_kg: string | null;
+  suggested_reps: number;
+  suggested_reps_text: string;
+  reason: string;
+};
+
+export type WorkoutExerciseWithProgression = WorkoutExercise & {
+  progression_suggestion: ProgressionSuggestion;
+};
+
 export type WorkoutDay = {
   id: string;
   program_id: string;
@@ -80,6 +96,10 @@ export type WorkoutDay = {
   workout_exercises: WorkoutExercise[];
   created_at: string;
   updated_at: string;
+};
+
+export type WorkoutDayWithProgression = Omit<WorkoutDay, "workout_exercises"> & {
+  workout_exercises: WorkoutExerciseWithProgression[];
 };
 
 export type Program = {

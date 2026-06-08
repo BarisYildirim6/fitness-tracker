@@ -101,6 +101,36 @@ def test_programs_active_and_workout_day_detail(client: TestClient, db_session: 
     assert day_response.json()["title"] == "Monday Lower"
 
 
+def test_workout_day_progression_endpoint_returns_suggestions(client: TestClient, db_session: Session) -> None:
+    headers = auth_headers(client, email="progression-api@example.com")
+    user = get_user(db_session, email="progression-api@example.com")
+    exercise, _, workout_day = create_program_fixture(db_session, user)
+
+    client.post(
+        "/api/v1/workout-logs",
+        headers=headers,
+        json={
+            "workout_day_id": str(workout_day.id),
+            "started_at": "2026-06-02T08:00:00Z",
+            "completed_at": "2026-06-02T09:00:00Z",
+            "set_logs": [
+                {"exercise_id": str(exercise.id), "set_index": 1, "weight_kg": "20.00", "reps": 12, "rpe": "8.0"},
+                {"exercise_id": str(exercise.id), "set_index": 2, "weight_kg": "20.00", "reps": 12, "rpe": "8.5"},
+                {"exercise_id": str(exercise.id), "set_index": 3, "weight_kg": "20.00", "reps": 12, "rpe": "8.0"},
+            ],
+        },
+    )
+
+    response = client.get(f"/api/v1/workout-days/{workout_day.id}/progression", headers=headers)
+
+    assert response.status_code == 200
+    suggestion = response.json()["workout_exercises"][0]["progression_suggestion"]
+    assert suggestion["last_reps"] == [12, 12, 12]
+    assert suggestion["last_weight_kg"] == "20.00"
+    assert suggestion["suggested_weight_kg"] == "22.50"
+    assert suggestion["suggested_reps"] == 8
+
+
 def test_workout_log_create_list_detail_with_date_filter(client: TestClient, db_session: Session) -> None:
     headers = auth_headers(client)
     user = get_user(db_session)

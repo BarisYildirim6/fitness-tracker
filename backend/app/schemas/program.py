@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -97,8 +98,30 @@ class WorkoutExerciseDetailRead(WorkoutExerciseRead):
     exercise: ExerciseRead
 
 
+class ProgressionSuggestionRead(BaseModel):
+    exercise_id: UUID
+    last_performed_at: datetime | None = None
+    last_weight_kg: Decimal | None = None
+    last_reps: list[int] = Field(default_factory=list)
+    last_average_rpe: Decimal | None = None
+    suggested_weight_kg: Decimal | None = None
+    suggested_reps: int
+    suggested_reps_text: str
+    reason: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class WorkoutExerciseProgressionRead(WorkoutExerciseDetailRead):
+    progression_suggestion: ProgressionSuggestionRead
+
+
 class WorkoutDayDetailRead(WorkoutDayRead):
     workout_exercises: list[WorkoutExerciseDetailRead] = Field(default_factory=list)
+
+
+class WorkoutDayProgressionRead(WorkoutDayRead):
+    workout_exercises: list[WorkoutExerciseProgressionRead] = Field(default_factory=list)
 
 
 class ProgramDetailRead(ProgramRead):

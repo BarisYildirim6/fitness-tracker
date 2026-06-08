@@ -3,7 +3,16 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { apiRequest } from "../api/client";
-import { ExerciseOverride, Program, WorkoutDay, WorkoutExercise, WorkoutLog } from "../api/types";
+import {
+  ExerciseOverride,
+  Program,
+  ProgressionSuggestion,
+  WorkoutDay,
+  WorkoutDayWithProgression,
+  WorkoutExercise,
+  WorkoutExerciseWithProgression,
+  WorkoutLog,
+} from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { EmptyState, ErrorState, LoadingState } from "../components/EmptyState";
 import { PageHeader } from "../components/PageHeader";
@@ -19,25 +28,34 @@ type SetEntryField = keyof Omit<SetEntry, "id">;
 type SetEntriesByWorkoutExercise = Record<string, SetEntry[]>;
 type ValidationErrors = Record<string, string>;
 
-function createSetEntry(reps = ""): SetEntry {
+function createSetEntry(reps = "", weightKg = ""): SetEntry {
   return {
     id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-    weight_kg: "",
+    weight_kg: weightKg,
     reps,
     rpe: "",
   };
 }
 
-function buildInitialSets(day: WorkoutDay): SetEntriesByWorkoutExercise {
+function progressionFor(item: WorkoutExercise | WorkoutExerciseWithProgression): ProgressionSuggestion | null {
+  return "progression_suggestion" in item ? item.progression_suggestion : null;
+}
+
+function buildInitialSets(day: WorkoutDay | WorkoutDayWithProgression): SetEntriesByWorkoutExercise {
   return Object.fromEntries(
-    day.workout_exercises.map((item) => [
-      item.id,
-      Array.from({ length: item.sets }, () => createSetEntry(String(item.rep_min))),
-    ]),
+    day.workout_exercises.map((item) => {
+      const suggestion = progressionFor(item);
+      return [
+        item.id,
+        Array.from({ length: item.sets }, () =>
+          createSetEntry(String(suggestion?.suggested_reps ?? item.rep_min), suggestion?.suggested_weight_kg ?? ""),
+        ),
+      ];
+    }),
   );
 }
 
-function validateSets(selectedDay: WorkoutDay, setsByExercise: SetEntriesByWorkoutExercise): ValidationErrors {
+function validateSets(selectedDay: WorkoutDay | WorkoutDayWithProgression, setsByExercise: SetEntriesByWorkoutExercise): ValidationErrors {
   const errors: ValidationErrors = {};
   let totalSets = 0;
 
@@ -71,6 +89,16 @@ function validateSets(selectedDay: WorkoutDay, setsByExercise: SetEntriesByWorko
 
 function prescribedText(item: WorkoutExercise) {
   return `${item.sets} x ${item.rep_min}-${item.rep_max}${item.rest_seconds ? `, ${item.rest_seconds}s rest` : ""}`;
+}
+
+function formatLastPerformance(suggestion: ProgressionSuggestion) {
+  if (suggestion.last_reps.length === 0) {
+    return "No previous log";
+  }
+  const weight = suggestion.last_weight_kg ? `${suggestion.last_weight_kg} kg` : "bodyweight";
+  const reps = suggestion.last_reps.join("/");
+  const rpe = suggestion.last_average_rpe ? `, avg RPE ${suggestion.last_average_rpe}` : "";
+  return `${weight} x ${reps}${rpe}`;
 }
 
 export function ActiveWorkoutPage() {
@@ -120,14 +148,26 @@ export function ActiveWorkoutPage() {
   }, [requestedDayId, workoutDays]);
 
   const selectedDay = workoutDays.find((day) => day.id === selectedDayId) ?? workoutDays[0];
+  const selectedDayIdForQuery = selectedDay?.id;
+  const {
+    data: progressionDay,
+    isLoading: progressionLoading,
+    isError: progressionError,
+  } = useQuery({
+    queryKey: ["workout-day-progression", selectedDayIdForQuery],
+    queryFn: () => apiRequest<WorkoutDayWithProgression>(`/api/v1/workout-days/${selectedDayIdForQuery}/progression`, { token }),
+    enabled: Boolean(selectedDayIdForQuery),
+  });
+  const suggestionsPending = Boolean(selectedDayIdForQuery) && progressionLoading && !progressionDay;
+  const selectedDayForLogging = progressionDay?.id === selectedDayIdForQuery ? progressionDay : selectedDay;
 
   useEffect(() => {
-    if (selectedDay) {
-      setSetsByExercise(buildInitialSets(selectedDay));
+    if (selectedDayForLogging && !suggestionsPending) {
+      setSetsByExercise(buildInitialSets(selectedDayForLogging));
       setErrors({});
       setStartedAt(new Date().toISOString());
     }
-  }, [selectedDay?.id]);
+  }, [selectedDayForLogging, suggestionsPending]);
 
   function updateSet(workoutExerciseId: string, setId: string, field: SetEntryField, value: string) {
     setSetsByExercise((current) => ({
@@ -158,11 +198,11 @@ export function ActiveWorkoutPage() {
 
   const createLog = useMutation({
     mutationFn: () => {
-      if (!selectedDay) {
+      if (!selectedDayForLogging) {
         throw new Error("No workout day selected.");
       }
 
-      const nextErrors = validateSets(selectedDay, setsByExercise);
+      const nextErrors = validateSets(selectedDayForLogging, setsByExercise);
       setErrors(nextErrors);
       if (Object.keys(nextErrors).length > 0) {
         throw new Error("Validation failed.");
@@ -172,11 +212,11 @@ export function ActiveWorkoutPage() {
         method: "POST",
         token,
         body: {
-          workout_day_id: selectedDay.id,
+          workout_day_id: selectedDayForLogging.id,
           started_at: startedAt,
           completed_at: new Date().toISOString(),
           notes: notes || null,
-          set_logs: selectedDay.workout_exercises.flatMap((item) =>
+          set_logs: selectedDayForLogging.workout_exercises.flatMap((item) =>
             (setsByExercise[item.id] ?? []).map((set, index) => ({
               exercise_id: effectiveExercise(item).id,
               set_index: index + 1,
@@ -205,14 +245,16 @@ export function ActiveWorkoutPage() {
       <PageHeader title="Active Workout" description="Log sets quickly from the selected workout day." />
       {programLoading ? <LoadingState label="Loading workout..." /> : null}
       {programError ? <ErrorState title="Workout plan unavailable" description="Run the seed script or check backend health." /> : null}
-      {!programLoading && !selectedDay ? (
+      {suggestionsPending ? <LoadingState label="Loading progression suggestions..." /> : null}
+      {progressionError ? <ErrorState title="Progression suggestions unavailable" description="You can still log the workout with the programmed defaults." /> : null}
+      {!programLoading && !suggestionsPending && !selectedDayForLogging ? (
         <EmptyState title="No workout day available" description="Seed the default plan, then return here to log a session." actionHref="/weekly-plan" actionLabel="View weekly plan" />
-      ) : (
+      ) : !suggestionsPending && selectedDayForLogging ? (
         <form className="active-workout" onSubmit={handleSubmit}>
           <section className="workout-toolbar panel">
             <label>
               Workout day
-              <select value={selectedDay.id} onChange={(event) => setSelectedDayId(event.target.value)}>
+              <select value={selectedDayForLogging.id} onChange={(event) => setSelectedDayId(event.target.value)}>
                 {workoutDays.map((day) => (
                   <option key={day.id} value={day.id}>
                     {day.title}
@@ -234,9 +276,10 @@ export function ActiveWorkoutPage() {
           </section>
 
           <section className="set-log-list">
-            {selectedDay.workout_exercises.map((item) => {
+            {selectedDayForLogging.workout_exercises.map((item) => {
               const sets = setsByExercise[item.id] ?? [];
               const selectedExercise = effectiveExercise(item);
+              const suggestion = progressionFor(item);
               return (
                 <article className="set-log-card" key={item.id}>
                   <div className="set-log-header">
@@ -244,6 +287,16 @@ export function ActiveWorkoutPage() {
                       <h2>{selectedExercise.name}</h2>
                       {selectedExercise.id !== item.exercise_id ? <span className="swap-badge">Swapped from {item.exercise.name}</span> : null}
                       <p>{prescribedText(item)}</p>
+                      {suggestion ? (
+                        <div className="progression-panel">
+                          <span>Last: {formatLastPerformance(suggestion)}</span>
+                          <span>
+                            Suggested: {suggestion.suggested_weight_kg ? `${suggestion.suggested_weight_kg} kg, ` : ""}
+                            {suggestion.suggested_reps_text}
+                          </span>
+                          <p>{suggestion.reason}</p>
+                        </div>
+                      ) : null}
                     </div>
                     <button type="button" className="secondary-button" onClick={() => addSet(item)}>
                       Add set
@@ -307,7 +360,7 @@ export function ActiveWorkoutPage() {
             })}
           </section>
         </form>
-      )}
+      ) : null}
 
       <section className="panel">
         <h2>Recent logs</h2>
